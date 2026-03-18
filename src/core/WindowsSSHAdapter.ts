@@ -27,14 +27,14 @@ export class WindowsSSHAdapter extends EventEmitter {
   async connectWithPowerShell(options: SSHOptions): Promise<void> {
     const psScript = `
 $ErrorActionPreference = "Stop"
-$password = "${options.password?.replace(/"/g, '`"')}"
+$password = $env:MCP_SSH_PASSWORD
 $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential ("${options.username}", $securePassword)
+$credential = New-Object System.Management.Automation.PSCredential($env:MCP_SSH_USERNAME, $securePassword)
 
 # Create SSH process info
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = "ssh"
-$psi.Arguments = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${options.username}@${options.host}"
+$psi.Arguments = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $env:MCP_SSH_USERNAME@$env:MCP_SSH_HOST"
 $psi.UseShellExecute = $false
 $psi.RedirectStandardInput = $true
 $psi.RedirectStandardOutput = $true
@@ -63,10 +63,18 @@ while (!$process.HasExited) {
 }
     `.trim();
 
+    const env = {
+      ...process.env,
+      MCP_SSH_PASSWORD: options.password || '',
+      MCP_SSH_USERNAME: options.username || '',
+      MCP_SSH_HOST: options.host || '',
+    };
+
     try {
-      this.process = spawn('powershell', ['-NoProfile', '-Command', psScript], {
+      this.process = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        env,
       });
 
       this.setupHandlers();
@@ -92,9 +100,8 @@ while (!$process.HasExited) {
       (options.port || 22).toString(),
     ];
 
-    if (options.password) {
-      args.push('-pw', options.password);
-    }
+    // Password is piped via stdin instead of -pw to avoid exposing it in process args
+    const hasPassword = !!options.password;
 
     if (options.strictHostKeyChecking === false) {
       args.push('-batch'); // Don't ask for host key confirmation
@@ -117,6 +124,11 @@ while (!$process.HasExited) {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
           });
+
+          // Pipe password via stdin instead of command-line argument
+          if (hasPassword && this.process.stdin) {
+            this.process.stdin.write(options.password + '\n');
+          }
 
           this.setupHandlers();
           await this.waitForConnection(5000);

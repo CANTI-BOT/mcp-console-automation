@@ -255,6 +255,10 @@ jobs:
         run: |
           git clone https://github.com/modelcontextprotocol/registry /tmp/mcp-registry
           cd /tmp/mcp-registry
+          # SECURITY: Pin to a specific known-good commit for reproducible and verified builds
+          # TODO: Replace <commit-sha> with a verified commit hash from https://github.com/modelcontextprotocol/registry/commits
+          # This ensures the build is not compromised by updates to the default branch
+          git checkout <commit-sha>
           make publisher
           sudo mv bin/mcp-publisher /usr/local/bin/
           mcp-publisher --version

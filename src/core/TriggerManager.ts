@@ -9,6 +9,7 @@ import * as cron from 'node-cron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { WebSocketServer } from 'ws';
+import { Parser } from 'expr-eval';
 import {
   WorkflowTrigger,
   TriggerConfig,
@@ -47,7 +48,7 @@ export interface TriggerMetrics {
 export class TriggerManager extends EventEmitter {
   private triggers: Map<string, WorkflowTrigger>;
   private cronJobs: Map<string, cron.ScheduledTask>;
-  private fileWatchers: Map<string, fs.FSWatcher>;
+  private fileWatchers: Map<string, fs.FSWatcher[]>;
   private conditionCheckers: Map<string, NodeJS.Timeout>;
   private webhookServer?: WebSocketServer;
   private eventListeners: Map<string, EventListener>;
@@ -298,7 +299,7 @@ export class TriggerManager extends EventEmitter {
     }
 
     if (watchers.length > 0) {
-      this.fileWatchers.set(triggerId, watchers[0]); // Store first watcher for cleanup
+      this.fileWatchers.set(triggerId, watchers); // Store all watchers for cleanup
     }
 
     this.logger.info(
@@ -574,11 +575,10 @@ export class TriggerManager extends EventEmitter {
    */
   private async evaluateCondition(expression: string): Promise<boolean> {
     try {
-      // Simple expression evaluation
-      // In production, use a proper expression engine with security considerations
-      const func = new Function(`return ${expression}`);
-      return Boolean(func());
-    } catch {
+      const parser = new Parser();
+      return Boolean(parser.evaluate(expression, {}));
+    } catch (err) {
+      this.logger?.warn?.(`Condition evaluation failed: ${expression}`, err);
       return false;
     }
   }
@@ -740,9 +740,11 @@ export class TriggerManager extends EventEmitter {
     }
 
     // Clean up file watchers
-    const watcher = this.fileWatchers.get(triggerId);
-    if (watcher) {
-      watcher.close();
+    const watchers = this.fileWatchers.get(triggerId);
+    if (watchers) {
+      for (const w of watchers) {
+        w.close();
+      }
       this.fileWatchers.delete(triggerId);
     }
 
@@ -846,8 +848,10 @@ export class TriggerManager extends EventEmitter {
     }
 
     // Close all file watchers
-    for (const watcher of this.fileWatchers.values()) {
-      watcher.close();
+    for (const watchers of this.fileWatchers.values()) {
+      for (const w of watchers) {
+        w.close();
+      }
     }
 
     // Clear all condition checkers

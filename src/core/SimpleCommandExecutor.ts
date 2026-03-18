@@ -1,10 +1,10 @@
-import { spawn, execSync, exec, ChildProcess } from 'child_process';
+import { spawn, execFileSync, execFile, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { promisify } from 'util';
 import { Logger } from '../utils/logger.js';
 import { SessionOptions, SSHConnectionOptions } from '../types/index.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * Simple command executor that bypasses the complex session/event system
@@ -32,11 +32,11 @@ export class SimpleCommandExecutor {
       encoding?: BufferEncoding;
     } = {}
   ): Promise<{ output: string; exitCode: number }> {
+    if (command.length > 1024) {
+      throw new Error('Command exceeds maximum allowed length');
+    }
     try {
-      const fullCommand =
-        args.length > 0 ? `${command} ${args.join(' ')}` : command;
-
-      const output = execSync(fullCommand, {
+      const output = execFileSync(command, args, {
         cwd: options.cwd || process.cwd(),
         env: { ...process.env, ...options.env },
         timeout: options.timeout || 120000,
@@ -49,7 +49,7 @@ export class SimpleCommandExecutor {
         exitCode: 0,
       };
     } catch (error: any) {
-      // execSync throws on non-zero exit codes
+      // execFileSync throws on non-zero exit codes
       return {
         output: error.stdout
           ? error.stdout.toString() + error.stderr?.toString()
@@ -74,11 +74,11 @@ export class SimpleCommandExecutor {
       maxBuffer?: number;
     } = {}
   ): Promise<{ output: string; exitCode: number }> {
+    if (command.length > 1024) {
+      throw new Error('Command exceeds maximum allowed length');
+    }
     try {
-      const fullCommand =
-        args.length > 0 ? `${command} ${args.join(' ')}` : command;
-
-      const { stdout, stderr } = await execAsync(fullCommand, {
+      const { stdout, stderr } = await execFileAsync(command, args, {
         cwd: options.cwd || process.cwd(),
         env: { ...process.env, ...options.env },
         timeout: options.timeout || 120000,

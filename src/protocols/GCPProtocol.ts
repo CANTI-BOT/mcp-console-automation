@@ -68,6 +68,8 @@ try {
     'gcp-metadata not available, metadata service functionality will be disabled'
   );
 }
+import { readFileSync } from 'fs';
+import { resolve, normalize, extname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import {
   GCPConnectionOptions,
@@ -854,7 +856,17 @@ export class GCPProtocol extends BaseProtocol {
     if (options.keyFile) {
       credentials = JSON.parse(options.keyFile);
     } else if (options.keyFilename) {
-      credentials = require(options.keyFilename);
+      // Safely read the key file instead of using dynamic require() which allows
+      // arbitrary code execution via crafted .js files on the path
+      const safePath = normalize(resolve(options.keyFilename));
+      if (extname(safePath) !== '.json') {
+        throw new Error(`GCP key file must be a .json file, got: ${extname(safePath)}`);
+      }
+      try {
+        credentials = JSON.parse(readFileSync(safePath, 'utf8'));
+      } catch (err) {
+        throw new Error(`Failed to read GCP key file at ${safePath}: ${err}`);
+      }
     } else if (options.credentials) {
       credentials = options.credentials;
     } else {

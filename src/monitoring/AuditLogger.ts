@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import {
   createHash,
+  createHmac,
   createCipheriv,
   createDecipheriv,
   randomBytes,
@@ -68,8 +69,8 @@ export class AuditLogger extends EventEmitter {
       logDirectory: './logs/audit',
       encryption: {
         enabled: false,
-        algorithm: 'aes-256-cbc',
-        key: process.env.AUDIT_ENCRYPTION_KEY || 'default-key-change-me',
+        algorithm: 'aes-256-gcm',
+        key: process.env.AUDIT_ENCRYPTION_KEY || '',
       },
       retention: {
         days: 365, // 1 year retention for compliance
@@ -95,6 +96,14 @@ export class AuditLogger extends EventEmitter {
     if (!this.config.enabled) {
       this.logger.info('Audit logging is disabled');
       return;
+    }
+
+    // Fail fast if encryption is enabled but no key is provided
+    if (this.config.encryption.enabled && !process.env.AUDIT_ENCRYPTION_KEY) {
+      throw new Error(
+        'AUDIT_ENCRYPTION_KEY environment variable is required when encryption is enabled. ' +
+        'Set AUDIT_ENCRYPTION_KEY or disable encryption in audit config.'
+      );
     }
 
     try {
@@ -397,18 +406,21 @@ export class AuditLogger extends EventEmitter {
     return this.config.filtering.excludeEvents.includes(eventType);
   }
 
-  // Sanitize sensitive fields
+  // Sanitize sensitive fields (recursive to catch nested objects)
   private sanitizeSensitiveFields(
-    details: Record<string, any>
-  ): Record<string, any> {
-    const sanitized = { ...details };
-
-    this.config.filtering.sensitiveFields.forEach((field) => {
-      if (field in sanitized) {
-        sanitized[field] = '[REDACTED]';
+    obj: Record<string, unknown>
+  ): Record<string, unknown> {
+    const sensitiveFields = this.config.filtering?.sensitiveFields || ['password', 'secret', 'token', 'key', 'credential'];
+    const sanitized: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (sensitiveFields.some(f => k.toLowerCase().includes(f.toLowerCase()))) {
+        sanitized[k] = '[REDACTED]';
+      } else if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        sanitized[k] = this.sanitizeSensitiveFields(v as Record<string, unknown>);
+      } else {
+        sanitized[k] = v;
       }
-    });
-
+    }
     return sanitized;
   }
 
@@ -489,59 +501,53 @@ export class AuditLogger extends EventEmitter {
     };
   }
 
-  // Encrypt data
+  // Encrypt data using AES-256-GCM (authenticated encryption)
+  // MIGRATION NOTE: This is a breaking change from the previous AES-256-CBC format.
+  // Old format was "iv:ciphertext" (2 parts). New format is "iv:ciphertext:authTag" (3 parts).
+  // Existing encrypted audit logs in CBC format cannot be decrypted by this version.
+  // Archive or re-encrypt old logs before upgrading.
   private encrypt(data: string): string {
     if (!this.config.encryption.enabled) {
       return data;
     }
 
     try {
-      const algorithm = 'aes-256-cbc';
-      const key = createHash('sha256')
-        .update(this.config.encryption.key)
-        .digest();
-      const iv = randomBytes(16);
-
-      const cipher = createCipheriv(algorithm, key, iv);
+      const iv = randomBytes(12); // 96-bit IV for GCM
+      const key = Buffer.from(process.env.AUDIT_ENCRYPTION_KEY!, 'hex').subarray(0, 32);
+      const cipher = createCipheriv('aes-256-gcm', key, iv);
       let encrypted = cipher.update(data, 'utf8', 'hex');
       encrypted += cipher.final('hex');
-
-      // Prepend IV to encrypted data
-      return iv.toString('hex') + ':' + encrypted;
+      const authTag = (cipher as any).getAuthTag().toString('hex');
+      return `${iv.toString('hex')}:${encrypted}:${authTag}`;
     } catch (error) {
       this.logger.error(`Encryption failed: ${error}`);
-      return data; // Return unencrypted if encryption fails
+      throw new Error(`Audit log encryption failed — refusing to write unencrypted data: ${error}`);
     }
   }
 
-  // Decrypt data
+  // Decrypt data using AES-256-GCM (authenticated encryption)
   private decrypt(encryptedData: string): string {
     if (!this.config.encryption.enabled) {
       return encryptedData;
     }
 
     try {
-      const algorithm = 'aes-256-cbc';
-      const key = createHash('sha256')
-        .update(this.config.encryption.key)
-        .digest();
-
-      // Extract IV from encrypted data
       const parts = encryptedData.split(':');
-      if (parts.length !== 2) {
-        throw new Error('Invalid encrypted data format');
+      if (parts.length !== 3) {
+        throw new Error('Invalid encrypted data format (expected iv:ciphertext:authTag)');
       }
-
-      const iv = Buffer.from(parts[0], 'hex');
-      const encrypted = parts[1];
-
-      const decipher = createDecipheriv(algorithm, key, iv);
+      const [ivHex, encrypted, authTagHex] = parts;
+      const iv = Buffer.from(ivHex, 'hex');
+      const authTag = Buffer.from(authTagHex, 'hex');
+      const key = Buffer.from(process.env.AUDIT_ENCRYPTION_KEY!, 'hex').subarray(0, 32);
+      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      (decipher as any).setAuthTag(authTag);
       let decrypted = decipher.update(encrypted, 'hex', 'utf8');
       decrypted += decipher.final('utf8');
       return decrypted;
     } catch (error) {
       this.logger.error(`Decryption failed: ${error}`);
-      return encryptedData;
+      throw new Error(`Audit log decryption failed — data may be tampered or corrupted: ${error}`);
     }
   }
 
@@ -550,12 +556,13 @@ export class AuditLogger extends EventEmitter {
     return createHash('sha256').update(data).digest('hex');
   }
 
-  // Generate digital signature (simplified)
+  // Generate digital signature using HMAC-SHA256
   private generateDigitalSignature(data: string): string {
-    const hash = createHash('sha256').update(data).digest('hex');
-    return createHash('sha256')
-      .update(hash + this.config.encryption.key)
-      .digest('hex');
+    const key = process.env.AUDIT_ENCRYPTION_KEY || process.env.AUDIT_HMAC_KEY;
+    if (!key) {
+      throw new Error('AUDIT_ENCRYPTION_KEY or AUDIT_HMAC_KEY environment variable is required for digital signatures');
+    }
+    return createHmac('sha256', key).update(data).digest('hex');
   }
 
   // Compress log file (placeholder - would use actual compression library)

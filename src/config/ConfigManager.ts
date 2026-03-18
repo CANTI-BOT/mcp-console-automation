@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   copyFileSync,
+  chmodSync,
 } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -215,7 +216,13 @@ export class ConfigManager {
   private saveConfig(config?: MCPConfig): void {
     try {
       const configToSave = config || this.config;
-      writeFileSync(this.configPath, JSON.stringify(configToSave, null, 2));
+      // Write with owner-only permissions (0600) to protect credentials
+      writeFileSync(this.configPath, JSON.stringify(configToSave, null, 2), {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      // Ensure permissions are correct even if file already existed
+      try { chmodSync(this.configPath, 0o600); } catch { /* ignore on Windows */ }
       this.logger.debug(`Config saved to ${this.configPath}`);
     } catch (error) {
       this.logger.error(`Failed to save config: ${error}`);
@@ -228,6 +235,14 @@ export class ConfigManager {
     const existingIndex = this.config.connectionProfiles.findIndex(
       (p) => p.name === profile.name
     );
+
+    // Warn when storing SSH passwords in config
+    if (profile.sshOptions?.password) {
+      this.logger.warn(
+        'Storing SSH password in config file. Consider using SSH key authentication instead. ' +
+        'The config file is restricted to owner-only access (0600).'
+      );
+    }
 
     if (existingIndex >= 0) {
       this.config.connectionProfiles[existingIndex] = profile;

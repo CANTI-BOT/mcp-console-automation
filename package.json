@@ -70,6 +70,7 @@
     "dockerode": "^4.0.2",
     "dotenv": "^16.4.5",
     "eventemitter3": "^5.0.1",
+    "expr-eval": "^2.0.2",
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
     "jaeger-client": "^3.19.0",
