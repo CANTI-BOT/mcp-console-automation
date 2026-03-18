@@ -43,6 +43,9 @@ logs/
 # Testing
 coverage/
 .nyc_output/
+test-report.xml
+test-diagnostics/
+test-results/
 
 # OS
 .DS_Store
@@ -111,4 +114,5 @@ pagination-*.json
 final-*.json
 ultra-*.json
 sessions.json
+data/sessions.json
 *.tgz.harness-verified
