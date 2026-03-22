@@ -119,12 +119,6 @@ export class ConsoleAutomationServer {
         // Special debug for use_profile
         if (name === 'console_use_profile') {
           debugLog('[CRITICAL] *** console_use_profile RECEIVED ***');
-          // Try direct file write to ensure message is saved
-          fs.appendFileSync(
-            'C:\\Users\\yolan\\source\\repos\\mcp-console-automation\\urgent.log',
-            `[${new Date().toISOString()}] console_use_profile called with: ${JSON.stringify(args)}\n`,
-            'utf8'
-          );
         }
 
         // Enable MCP server mode to prevent stdio corruption
@@ -2533,15 +2527,28 @@ export class ConsoleAutomationServer {
           {
             type: 'text',
             text: removed
-              ? `Connection profile '${args.name}' removed`
-              : `Profile '${args.name}' not found`,
+              ? `Connection profile '${args.name}' removed successfully`
+              : `Connection profile '${args.name}' not found`,
           } as TextContent,
         ],
       };
     }
 
-    // For application profiles, we'd need to add a removeApplicationProfile method
-    throw new Error('Removing application profiles not yet implemented');
+    if (args.profileType === 'application') {
+      const removed = this.consoleManager.getConfigManager().removeApplicationProfile(args.name);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: removed
+              ? `Application profile '${args.name}' removed successfully`
+              : `Application profile '${args.name}' not found`,
+          } as TextContent,
+        ],
+      };
+    }
+
+    throw new McpError(ErrorCode.InvalidParams, `Unknown profile type: ${args.profileType}`);
   }
 
   private async handleUseProfile(args: {

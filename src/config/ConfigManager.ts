@@ -323,6 +323,19 @@ export class ConfigManager {
     return this.config.applicationProfiles.find((p) => p.name === name);
   }
 
+  public removeApplicationProfile(name: string): boolean {
+    const index = this.config.applicationProfiles.findIndex(
+      (p) => p.name === name
+    );
+    if (index >= 0) {
+      this.config.applicationProfiles.splice(index, 1);
+      this.saveConfig();
+      this.logger.info(`Removed application profile: ${name}`);
+      return true;
+    }
+    return false;
+  }
+
   public getApplicationProfileByType(
     type: string
   ): ApplicationProfile | undefined {
