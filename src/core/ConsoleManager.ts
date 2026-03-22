@@ -574,8 +574,8 @@ export class ConsoleManager
             session.exitCode = data.exitCode;
           }
 
-          console.error(
-            `[MAPPING-FIX] Protocol session ${protocolSessionId} closed, emitting console-event for ConsoleManager session ${sessionId}`
+          this.logger.debug(
+            `Protocol session ${protocolSessionId} closed, emitting console-event for ConsoleManager session ${sessionId}`
           );
 
           // Emit console-event that our Promise is waiting for
@@ -619,8 +619,8 @@ export class ConsoleManager
     } as ConsoleOutput);
 
     // Also emit console-event that executeCommand Promise is waiting for
-    console.error(
-      `[MAPPING-FIX] Emitting console-event output for session ${sessionId}, data length: ${output.data?.length || 0}`
+    this.logger.debug(
+      `Emitting console-event output for session ${sessionId}, data length: ${output.data?.length || 0}`
     );
     this.emit('console-event', {
       sessionId: sessionId, // Use ConsoleManager sessionId
@@ -2298,8 +2298,8 @@ export class ConsoleManager
       }
 
       // Create session using the protocol
-      console.error(
-        `[EVENT-FIX] About to call protocol.createSession with resolvedOptions.isOneShot = ${resolvedOptions.isOneShot}`
+      this.logger.debug(
+        `About to call protocol.createSession with resolvedOptions.isOneShot = ${resolvedOptions.isOneShot}`
       );
       const protocolSession = await protocol.createSession(resolvedOptions);
 

@@ -2558,7 +2558,6 @@ export class ConsoleAutomationServer {
     cwd?: string;
     env?: Record<string, string>;
   }) {
-    console.error('[URGENT] handleUseProfile called with:', args);
     this.logger.info(
       `handleUseProfile called with profile: ${args.profileName}`
     );
@@ -2648,10 +2647,6 @@ export class ConsoleAutomationServer {
       // Check for Windows SSH password authentication early
       if (profile.type === 'ssh' && profile.sshOptions) {
         const platform = require('os').platform();
-        console.error(
-          '[URGENT] Server-side Windows check - Platform detected:',
-          platform
-        );
         debugLog('[DEBUG] Platform detected:', platform);
         debugLog('[DEBUG] SSH options:', {
           hasPassword: !!profile.sshOptions.password,
@@ -2663,9 +2658,6 @@ export class ConsoleAutomationServer {
           profile.sshOptions.password &&
           !profile.sshOptions.privateKey
         ) {
-          console.error(
-            '[URGENT] SERVER: Windows SSH password detected - throwing immediate error'
-          );
           debugLog(
             '[DEBUG] Windows SSH password detected - throwing immediate error'
           );
@@ -2782,8 +2774,7 @@ export class ConsoleAutomationServer {
       }
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? (error.stack || error.message) : String(error);
-      console.error('use_profile error:', errMsg);
-      debugLog('[ERROR] Profile usage failed:', error);
+      debugLog('[ERROR] Profile usage failed:', errMsg);
       throw error;
     }
   }
