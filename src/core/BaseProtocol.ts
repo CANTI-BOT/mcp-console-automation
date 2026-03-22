@@ -33,6 +33,9 @@ export abstract class BaseProtocol extends EventEmitter implements IProtocol {
   protected isInitialized: boolean = false;
   private initializationTime: number = Date.now();
 
+  // Buffer size cap — prevents unbounded memory growth per session
+  private readonly MAX_BUFFER_SIZE = 10_000;
+
   // Session management fixes
   private sessionTypes: Map<string, 'oneshot' | 'persistent'> = new Map();
   private sessionStates: Map<string, SessionState> = new Map();
@@ -218,26 +221,42 @@ export abstract class BaseProtocol extends EventEmitter implements IProtocol {
   }
 
   /**
-   * Wait for one-shot command output with timeout
+   * Wait for one-shot command output with timeout — event-driven, no polling
    */
-  private async waitForOneShotOutput(
+  private waitForOneShotOutput(
     sessionId: string,
     maxWaitMs: number = 5000
   ): Promise<void> {
-    const startTime = Date.now();
+    // Fast path: if there is already buffered output or the session is done,
+    // resolve immediately without registering any listeners.
+    const buffer = this.outputBuffers.get(sessionId) || [];
     const sessionState = this.sessionStates.get(sessionId);
-
-    while (Date.now() - startTime < maxWaitMs) {
-      const buffer = this.outputBuffers.get(sessionId) || [];
-
-      // If we have output or session is complete, return
-      if (buffer.length > 0 || sessionState?.status === 'stopped') {
-        return;
-      }
-
-      // Wait a bit before checking again
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    if (buffer.length > 0 || sessionState?.status === 'stopped') {
+      return Promise.resolve();
     }
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.removeListener(`output-${sessionId}`, onOutput);
+        this.removeListener(`session-complete-${sessionId}`, onComplete);
+        resolve();
+      }, maxWaitMs);
+
+      const onOutput = () => {
+        clearTimeout(timer);
+        this.removeListener(`session-complete-${sessionId}`, onComplete);
+        resolve();
+      };
+
+      const onComplete = () => {
+        clearTimeout(timer);
+        this.removeListener(`output-${sessionId}`, onOutput);
+        resolve();
+      };
+
+      this.once(`output-${sessionId}`, onOutput);
+      this.once(`session-complete-${sessionId}`, onComplete);
+    });
   }
 
   /**
@@ -251,11 +270,19 @@ export abstract class BaseProtocol extends EventEmitter implements IProtocol {
     const buffer = this.outputBuffers.get(sessionId)!;
     buffer.push(output);
 
+    // Enforce rolling window — evict oldest entries when over limit
+    while (buffer.length > this.MAX_BUFFER_SIZE) {
+      buffer.shift();
+    }
+
     // Update session activity
     const sessionState = this.sessionStates.get(sessionId);
     if (sessionState) {
       sessionState.lastActivity = new Date();
     }
+
+    // Emit session-scoped output event (used by waitForOneShotOutput)
+    this.emit(`output-${sessionId}`, output);
 
     // Emit output event
     this.emit('output', output);
@@ -431,6 +458,8 @@ export abstract class BaseProtocol extends EventEmitter implements IProtocol {
     }
 
     this.emit('session-complete', { sessionId, exitCode });
+    // Also emit the session-scoped event so waitForOneShotOutput can resolve
+    this.emit(`session-complete-${sessionId}`, { exitCode });
   }
 
   /**

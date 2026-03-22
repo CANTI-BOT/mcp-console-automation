@@ -17,6 +17,7 @@ import {
   WorkflowExecution,
 } from '../types/workflow.js';
 import { Logger } from '../utils/logger.js';
+import { Parser } from 'expr-eval';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -58,6 +59,16 @@ export interface DataLog {
   stage: string;
   message: string;
   recordCount?: number;
+}
+
+/**
+ * Basic ReDoS guard: reject patterns with nested quantifiers
+ */
+function safeRegex(pattern: string): RegExp {
+  if (/(\(.*\+.*\)|\(.*\*.*\)|\{.*\d+,.*\d+.*\}.*[+*])/.test(pattern)) {
+    throw new Error(`Potentially unsafe regex pattern rejected: ${pattern}`);
+  }
+  return new RegExp(pattern);
 }
 
 export class DataPipelineManager extends EventEmitter {
@@ -164,6 +175,9 @@ export class DataPipelineManager extends EventEmitter {
 
       this.emit('pipeline-completed', executionId);
 
+      // Schedule eviction after 1 hour
+      setTimeout(() => this.executions.delete(executionId), 3_600_000);
+
       return executionId;
     } catch (error: unknown) {
       execution.status = 'failed';
@@ -176,6 +190,10 @@ export class DataPipelineManager extends EventEmitter {
       });
 
       this.emit('pipeline-failed', executionId, error);
+
+      // Schedule eviction after 1 hour
+      setTimeout(() => this.executions.delete(executionId), 3_600_000);
+
       throw error;
     }
   }
@@ -468,13 +486,13 @@ export class DataPipelineManager extends EventEmitter {
 
       case 'pattern':
         if (typeof value !== 'string') return false;
-        return new RegExp(rule.value as string).test(value);
+        return safeRegex(rule.value as string).test(value);
 
       case 'custom':
-        // Custom validation function
+        // Custom validation using safe expression evaluation
         try {
-          const func = new Function('value', rule.value as string);
-          return Boolean(func(value));
+          const parser = new Parser();
+          return Boolean(parser.evaluate(rule.value as string, { value: value as number | string }));
         } catch {
           return false;
         }
@@ -723,9 +741,10 @@ export class DataPipelineManager extends EventEmitter {
     }
 
     const mappingFunction = config.function || config.expression;
-    const func = new Function('item', 'index', `return ${mappingFunction}`);
+    const parser = new Parser();
+    const expr = parser.parse(mappingFunction);
 
-    return data.map((item, index) => func(item, index));
+    return data.map((item, index) => expr.evaluate({ item, index }));
   }
 
   private async applyFilterTransformation(
@@ -737,9 +756,10 @@ export class DataPipelineManager extends EventEmitter {
     }
 
     const filterFunction = config.function || config.expression;
-    const func = new Function('item', 'index', `return ${filterFunction}`);
+    const parser = new Parser();
+    const expr = parser.parse(filterFunction);
 
-    return data.filter((item, index) => func(item, index));
+    return data.filter((item, index) => Boolean(expr.evaluate({ item, index })));
   }
 
   private async applyReduceTransformation(
@@ -751,15 +771,11 @@ export class DataPipelineManager extends EventEmitter {
     }
 
     const reduceFunction = config.function || config.expression;
-    const func = new Function(
-      'accumulator',
-      'item',
-      'index',
-      `return ${reduceFunction}`
-    );
+    const parser = new Parser();
+    const expr = parser.parse(reduceFunction);
 
     return data.reduce(
-      (acc, item, index) => func(acc, item, index),
+      (acc, item, index) => expr.evaluate({ accumulator: acc, item, index }),
       config.initialValue
     );
   }

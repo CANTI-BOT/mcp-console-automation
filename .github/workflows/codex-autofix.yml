@@ -1,3 +1,8 @@
+# SECURITY NOTE: This workflow is disabled pending action pinning.
+# Before re-enabling, pin openai/codex-action to a specific commit SHA.
+# Reason: @main is a mutable reference that could be compromised.
+# See: https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions
+
 name: Codex Auto-Fix on Failure
 
 on:
@@ -14,7 +19,6 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'failure' }}
     runs-on: ubuntu-latest
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       FAILED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
       FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
       FAILED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
@@ -22,7 +26,7 @@ jobs:
     steps:
       - name: Check OpenAI API Key Set
         run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
             echo "OPENAI_API_KEY secret is not set. Skipping auto-fix." >&2
             exit 1
           fi
@@ -39,17 +43,22 @@ jobs:
       - name: Install dependencies
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm i; fi
-      - name: Run Codex
-        uses: openai/codex-action@main
-        id: codex
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt: >-
-            You are working in a Node.js project with Jest tests and GitHub Actions.
-            Read the repository, run the test suite, identify the minimal change needed
-            to make all tests pass, implement only that change, and stop.
-            Do not refactor unrelated code or files. Keep changes small and surgical.
-          sandbox: workspace-write
+      # DISABLED: openai/codex-action@main is a mutable ref and cannot be used until pinned to SHA
+      # See: https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions
+      # Before re-enabling, replace <SHA> with a verified commit hash from https://github.com/openai/codex-action/commits
+      # - name: Run Codex
+      #   uses: openai/codex-action@<SHA>
+      #   id: codex
+      #   env:
+      #     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      #   with:
+      #     openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+      #     prompt: >-
+      #       You are working in a Node.js project with Jest tests and GitHub Actions.
+      #       Read the repository, run the test suite, identify the minimal change needed
+      #       to make all tests pass, implement only that change, and stop.
+      #       Do not refactor unrelated code or files. Keep changes small and surgical.
+      #     sandbox: workspace-write
       - name: Verify tests
         run: npm test --silent
       - name: Create pull request with fixes
@@ -65,4 +74,3 @@ jobs:
             Failed run: ${{ env.FAILED_RUN_URL }}
             Head branch: `${{ env.FAILED_HEAD_BRANCH }}`
             This PR contains minimal changes intended solely to make the CI pass.
-

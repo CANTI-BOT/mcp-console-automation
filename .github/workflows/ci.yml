@@ -230,6 +230,8 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: matrix.node-version == '20'
+        # TODO: Pin to SHA for security hardening
+        # codecov/codecov-action@v4 = consider pinning to: codecov/codecov-action@84508663e988701840491b86de86b666e8a86bed
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage/coverage-final.json

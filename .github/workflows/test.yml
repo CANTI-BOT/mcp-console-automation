@@ -40,6 +40,8 @@ jobs:
       run: npm test -- --testPathPattern="tests/.*\.test\.ts$" --coverage
     
     - name: Upload coverage to Codecov
+      # TODO: Pin to SHA for security hardening
+      # codecov/codecov-action@v4 = consider pinning to: codecov/codecov-action@84508663e988701840491b86de86b666e8a86bed
       uses: codecov/codecov-action@v4
       with:
         file: ./coverage/lcov.info
@@ -210,6 +212,7 @@ jobs:
       run: npm audit --audit-level=high
     
     - name: Run CodeQL Analysis
+      # Note: github/codeql-action from official GitHub org is trusted with version tags
       uses: github/codeql-action/init@v3
       with:
         languages: javascript
@@ -218,6 +221,7 @@ jobs:
       run: npm run build
     
     - name: Perform CodeQL Analysis
+      # Note: github/codeql-action from official GitHub org is trusted with version tags
       uses: github/codeql-action/analyze@v3
 
   docker-tests:
@@ -229,6 +233,8 @@ jobs:
       uses: actions/checkout@v4
     
     - name: Setup Docker Buildx
+      # TODO: Pin to SHA for security hardening
+      # docker/setup-buildx-action@v3 = consider pinning to a specific commit SHA
       uses: docker/setup-buildx-action@v3
     
     - name: Build Docker image

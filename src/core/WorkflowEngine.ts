@@ -28,6 +28,7 @@ import {
 } from '../types/workflow.js';
 import { ConsoleManager } from './ConsoleManager.js';
 import { Logger } from '../utils/logger.js';
+import { Parser } from 'expr-eval';
 
 export class WorkflowEngine extends EventEmitter {
   private executions: Map<string, WorkflowExecution>;
@@ -40,6 +41,7 @@ export class WorkflowEngine extends EventEmitter {
     string,
     (approved: boolean, comments?: string) => void
   >;
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor(consoleManager: ConsoleManager) {
     super();
@@ -50,6 +52,11 @@ export class WorkflowEngine extends EventEmitter {
     this.consoleManager = consoleManager;
     this.logger = new Logger('WorkflowEngine');
     this.approvalCallbacks = new Map();
+
+    // Auto-cleanup old executions every hour to prevent unbounded Map growth
+    this.cleanupInterval = setInterval(() => {
+      this.cleanup(24); // Remove executions older than 24 hours
+    }, 3_600_000);
   }
 
   /**
@@ -884,18 +891,15 @@ export class WorkflowEngine extends EventEmitter {
    */
   private evaluateExpression(
     expression: string,
-    data: any,
-    variables: Record<string, any>
-  ): any {
-    // Simple expression evaluation - in production, use a proper expression engine
+    data: unknown,
+    variables: Record<string, unknown>
+  ): unknown {
     try {
+      const parser = new Parser();
       const context = { ...variables, data };
-      const func = new Function(
-        ...Object.keys(context),
-        `return ${expression}`
-      );
-      return func(...Object.values(context));
-    } catch {
+      return parser.evaluate(expression, context as { [key: string]: number | string });
+    } catch (err) {
+      this.logger?.warn?.(`Expression evaluation failed: ${expression}`, err);
       return false;
     }
   }
@@ -1016,6 +1020,17 @@ export class WorkflowEngine extends EventEmitter {
         this.stateMachines.delete(id);
       }
     });
+  }
+
+  /**
+   * Destroy the engine — stops the auto-cleanup timer and releases resources
+   */
+  public destroy(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    this.removeAllListeners();
   }
 
   // Additional private helper methods would go here...
@@ -1270,11 +1285,29 @@ export class WorkflowEngine extends EventEmitter {
     );
     this.emit('approval-required', execution.id, approvalExecution);
 
-    // Wait for approval
+    // Wait for approval — with a 1-hour timeout to prevent permanent callback leaks
+    const APPROVAL_TIMEOUT_MS = 3_600_000; // 1 hour
+
     return new Promise((resolve, reject) => {
+      const approvalTimer = setTimeout(() => {
+        if (this.approvalCallbacks.has(approvalExecution.id)) {
+          this.approvalCallbacks.delete(approvalExecution.id);
+          approvalExecution.status = 'rejected';
+          approvalExecution.responseTime = new Date();
+          reject(
+            new Error(
+              `Task approval timed out after 1 hour: ${approvalExecution.id}`
+            )
+          );
+        }
+      }, APPROVAL_TIMEOUT_MS);
+
       this.approvalCallbacks.set(
         approvalExecution.id,
         (approved: boolean, comments?: string) => {
+          clearTimeout(approvalTimer);
+          this.approvalCallbacks.delete(approvalExecution.id);
+
           approvalExecution.status = approved ? 'approved' : 'rejected';
           approvalExecution.responseTime = new Date();
           approvalExecution.comments = comments;
@@ -1312,8 +1345,10 @@ export class WorkflowEngine extends EventEmitter {
   }
 
   private async waitForExecution(
-    executionId: string
+    executionId: string,
+    timeoutMs = 300_000
   ): Promise<WorkflowExecution> {
+    const deadline = Date.now() + timeoutMs;
     return new Promise((resolve, reject) => {
       const checkStatus = () => {
         const execution = this.executions.get(executionId);
@@ -1323,14 +1358,18 @@ export class WorkflowEngine extends EventEmitter {
         }
 
         if (
-          execution.status === 'completed' ||
-          execution.status === 'failed' ||
-          execution.status === 'cancelled'
+          ['completed', 'failed', 'cancelled'].includes(execution.status)
         ) {
           resolve(execution);
-        } else {
-          setTimeout(checkStatus, 1000);
+          return;
         }
+
+        if (Date.now() > deadline) {
+          reject(new Error(`Execution ${executionId} timed out after ${timeoutMs}ms`));
+          return;
+        }
+
+        setTimeout(checkStatus, 1000);
       };
 
       checkStatus();

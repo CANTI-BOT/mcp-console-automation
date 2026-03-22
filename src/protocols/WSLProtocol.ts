@@ -1,9 +1,10 @@
-import { spawn, ChildProcess, SpawnOptions } from 'child_process';
+import { spawn, ChildProcess, SpawnOptions, execFile } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, resolve, dirname, sep, posix } from 'path';
 import { platform, homedir, tmpdir } from 'os';
 import { promisify } from 'util';
-import { exec } from 'child_process';
+
+const execFileAsync = promisify(execFile);
 
 import { BaseProtocol } from '../core/BaseProtocol.js';
 import { ProtocolCapabilities, SessionState } from '../core/IProtocol.js';
@@ -24,8 +25,6 @@ import {
   ExtendedErrorPattern,
   WSLErrorPattern,
 } from '../types/index.js';
-
-const execAsync = promisify(exec);
 
 export class WSLProtocol extends BaseProtocol {
   private static instance: WSLProtocol;
@@ -61,6 +60,18 @@ export class WSLProtocol extends BaseProtocol {
   public constructor() {
     super('WSLProtocol');
     this.wslConfigPath = join(homedir(), '.wslconfig');
+  }
+
+  private validateDistributionName(name: string): void {
+    if (!/^[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+      throw new Error(`Invalid WSL distribution name: "${name}". Only alphanumeric, dot, underscore, and hyphen characters are allowed.`);
+    }
+  }
+
+  private validatePath(p: string): void {
+    if (/[;&|`$<>]/.test(p)) {
+      throw new Error(`Invalid path contains shell metacharacters: "${p}"`);
+    }
   }
 
   public static getInstance(): WSLProtocol {
@@ -137,7 +148,7 @@ export class WSLProtocol extends BaseProtocol {
     }
 
     try {
-      const { stdout } = await execAsync('wsl --status', { timeout: 5000 });
+      const { stdout } = await execFileAsync('wsl', ['--status'], { timeout: 5000 });
       return (
         stdout.includes('Default Distribution') ||
         stdout.includes('Windows Subsystem for Linux')
@@ -145,7 +156,7 @@ export class WSLProtocol extends BaseProtocol {
     } catch (error) {
       try {
         // Try alternative check
-        await execAsync('wsl --list --quiet', { timeout: 5000 });
+        await execFileAsync('wsl', ['--list', '--quiet'], { timeout: 5000 });
         return true;
       } catch (fallbackError) {
         return false;
@@ -211,7 +222,7 @@ export class WSLProtocol extends BaseProtocol {
    */
   private async getWSLVersion(): Promise<string> {
     try {
-      const { stdout } = await execAsync('wsl --version', { timeout: 5000 });
+      const { stdout } = await execFileAsync('wsl', ['--version'], { timeout: 5000 });
       const match = stdout.match(/WSL version: ([\d.]+)/i);
       return match ? match[1] : 'unknown';
     } catch (error) {
@@ -225,7 +236,7 @@ export class WSLProtocol extends BaseProtocol {
    */
   public async getInstalledDistributions(): Promise<WSLDistribution[]> {
     try {
-      const { stdout } = await execAsync('wsl --list --verbose', {
+      const { stdout } = await execFileAsync('wsl', ['--list', '--verbose'], {
         timeout: 10000,
       });
       const lines = stdout
@@ -278,11 +289,12 @@ export class WSLProtocol extends BaseProtocol {
     distributionName: string
   ): Promise<Partial<WSLDistribution>> {
     const details: Partial<WSLDistribution> = {};
+    this.validateDistributionName(distributionName);
 
     try {
       // Get distribution version
-      const { stdout: versionOutput } = await execAsync(
-        `wsl -d ${distributionName} -- cat /etc/os-release 2>/dev/null || echo "VERSION_ID=unknown"`,
+      const { stdout: versionOutput } = await execFileAsync(
+        'wsl', ['-d', distributionName, '--', 'bash', '-c', 'cat /etc/os-release 2>/dev/null || echo "VERSION_ID=unknown"'],
         { timeout: 5000 }
       );
       const versionMatch = versionOutput.match(/VERSION_ID="?([^"\n]+)"?/);
@@ -290,8 +302,8 @@ export class WSLProtocol extends BaseProtocol {
 
       // Get architecture
       try {
-        const { stdout: archOutput } = await execAsync(
-          `wsl -d ${distributionName} -- uname -m`,
+        const { stdout: archOutput } = await execFileAsync(
+          'wsl', ['-d', distributionName, '--', 'uname', '-m'],
           { timeout: 3000 }
         );
         details.architecture =
@@ -302,8 +314,8 @@ export class WSLProtocol extends BaseProtocol {
 
       // Get network address (for WSL2 only)
       try {
-        const { stdout: ipOutput } = await execAsync(
-          `wsl -d ${distributionName} -- hostname -I`,
+        const { stdout: ipOutput } = await execFileAsync(
+          'wsl', ['-d', distributionName, '--', 'hostname', '-I'],
           { timeout: 3000 }
         );
         const ips = ipOutput.trim().split(' ');
@@ -317,8 +329,8 @@ export class WSLProtocol extends BaseProtocol {
 
       // Get kernel version
       try {
-        const { stdout: kernelOutput } = await execAsync(
-          `wsl -d ${distributionName} -- uname -r`,
+        const { stdout: kernelOutput } = await execFileAsync(
+          'wsl', ['-d', distributionName, '--', 'uname', '-r'],
           { timeout: 3000 }
         );
         details.kernel = kernelOutput.trim();
@@ -364,8 +376,8 @@ export class WSLProtocol extends BaseProtocol {
    */
   private async checkHyperVStatus(): Promise<boolean> {
     try {
-      const { stdout } = await execAsync(
-        'bcdedit /enum | findstr hypervisorlaunchtype',
+      const { stdout } = await execFileAsync(
+        'cmd', ['/c', 'bcdedit /enum | findstr hypervisorlaunchtype'],
         { timeout: 5000 }
       );
       return stdout.toLowerCase().includes('auto');
@@ -379,8 +391,8 @@ export class WSLProtocol extends BaseProtocol {
    */
   private async checkVirtualizationSupport(): Promise<boolean> {
     try {
-      const { stdout } = await execAsync(
-        'systeminfo | findstr /C:"Hyper-V Requirements"',
+      const { stdout } = await execFileAsync(
+        'cmd', ['/c', 'systeminfo | findstr /C:"Hyper-V Requirements"'],
         { timeout: 10000 }
       );
       return !stdout.toLowerCase().includes('no');
@@ -400,15 +412,16 @@ export class WSLProtocol extends BaseProtocol {
       );
 
       if (runningDist) {
-        const { stdout } = await execAsync(
-          `wsl -d ${runningDist.name} -- uname -r`,
+        this.validateDistributionName(runningDist.name);
+        const { stdout } = await execFileAsync(
+          'wsl', ['-d', runningDist.name, '--', 'uname', '-r'],
           { timeout: 5000 }
         );
         return stdout.trim();
       }
 
       // Fallback: try default distribution
-      const { stdout } = await execAsync('wsl -- uname -r', { timeout: 5000 });
+      const { stdout } = await execFileAsync('wsl', ['--', 'uname', '-r'], { timeout: 5000 });
       return stdout.trim();
     } catch (error) {
       return 'unknown';
@@ -422,7 +435,7 @@ export class WSLProtocol extends BaseProtocol {
     WSLAvailableDistribution[]
   > {
     try {
-      const { stdout } = await execAsync('wsl --list --online', {
+      const { stdout } = await execFileAsync('wsl', ['--list', '--online'], {
         timeout: 15000,
       });
       const lines = stdout
@@ -650,9 +663,10 @@ export class WSLProtocol extends BaseProtocol {
    * Get mounted drives for a distribution
    */
   private async getMountedDrives(distribution: string): Promise<string[]> {
+    this.validateDistributionName(distribution);
     try {
-      const { stdout } = await execAsync(
-        `wsl -d ${distribution} -- df -h | grep "/mnt/"`,
+      const { stdout } = await execFileAsync(
+        'wsl', ['-d', distribution, '--', 'bash', '-c', 'df -h | grep "/mnt/"'],
         { timeout: 5000 }
       );
 
@@ -676,8 +690,9 @@ export class WSLProtocol extends BaseProtocol {
    * Start a WSL distribution
    */
   public async startDistribution(distribution: string): Promise<void> {
+    this.validateDistributionName(distribution);
     try {
-      await execAsync(`wsl -d ${distribution} --exec true`, { timeout: 30000 });
+      await execFileAsync('wsl', ['-d', distribution, '--exec', 'true'], { timeout: 30000 });
     } catch (error) {
       throw new Error(
         `Failed to start distribution '${distribution}': ${error.message}`
@@ -689,8 +704,9 @@ export class WSLProtocol extends BaseProtocol {
    * Stop a WSL distribution
    */
   public async stopDistribution(distribution: string): Promise<void> {
+    this.validateDistributionName(distribution);
     try {
-      await execAsync(`wsl --terminate ${distribution}`, { timeout: 10000 });
+      await execFileAsync('wsl', ['--terminate', distribution], { timeout: 10000 });
     } catch (error) {
       throw new Error(
         `Failed to stop distribution '${distribution}': ${error.message}`
@@ -711,8 +727,9 @@ export class WSLProtocol extends BaseProtocol {
    * Set default distribution
    */
   public async setDefaultDistribution(distribution: string): Promise<void> {
+    this.validateDistributionName(distribution);
     try {
-      await execAsync(`wsl --set-default ${distribution}`, { timeout: 10000 });
+      await execFileAsync('wsl', ['--set-default', distribution], { timeout: 10000 });
     } catch (error) {
       throw new Error(`Failed to set default distribution: ${error.message}`);
     }
@@ -725,14 +742,15 @@ export class WSLProtocol extends BaseProtocol {
     distribution: string,
     installPath?: string
   ): Promise<void> {
+    this.validateDistributionName(distribution);
     try {
-      let command = `wsl --install -d ${distribution}`;
       if (installPath) {
+        this.validatePath(installPath);
         // For sideload installations
-        command = `wsl --import ${distribution} ${installPath}`;
+        await execFileAsync('wsl', ['--import', distribution, installPath], { timeout: 300000 });
+      } else {
+        await execFileAsync('wsl', ['--install', '-d', distribution], { timeout: 300000 });
       }
-
-      await execAsync(command, { timeout: 300000 }); // 5 minutes timeout for installation
     } catch (error) {
       throw new Error(
         `Failed to install distribution '${distribution}': ${error.message}`
@@ -744,8 +762,9 @@ export class WSLProtocol extends BaseProtocol {
    * Uninstall a distribution
    */
   public async uninstallDistribution(distribution: string): Promise<void> {
+    this.validateDistributionName(distribution);
     try {
-      await execAsync(`wsl --unregister ${distribution}`, { timeout: 30000 });
+      await execFileAsync('wsl', ['--unregister', distribution], { timeout: 30000 });
     } catch (error) {
       throw new Error(
         `Failed to uninstall distribution '${distribution}': ${error.message}`
@@ -823,7 +842,7 @@ export class WSLProtocol extends BaseProtocol {
 
     // For other paths, try to resolve using WSL
     try {
-      const { stdout } = await execAsync(`wsl -- wslpath -w "${linuxPath}"`, {
+      const { stdout } = await execFileAsync('wsl', ['--', 'wslpath', '-w', linuxPath], {
         timeout: 3000,
       });
       return stdout.trim();
@@ -880,6 +899,7 @@ export class WSLProtocol extends BaseProtocol {
       throw new Error(`Session ${sessionId} not found`);
     }
 
+    this.validateDistributionName(session.distribution);
     const fullCommand = args ? `${command} ${args.join(' ')}` : command;
 
     const wslArgs = ['-d', session.distribution];
@@ -895,7 +915,7 @@ export class WSLProtocol extends BaseProtocol {
     wslArgs.push('--', 'bash', '-c', fullCommand);
 
     try {
-      const { stdout, stderr } = await execAsync(`wsl ${wslArgs.join(' ')}`, {
+      const { stdout, stderr } = await execFileAsync('wsl', wslArgs, {
         timeout: options?.timeout || 30000,
         maxBuffer: 1024 * 1024 * 10, // 10MB buffer
       });
@@ -929,6 +949,7 @@ export class WSLProtocol extends BaseProtocol {
    * Get health status for a distribution
    */
   public async getDistributionHealthStatus(distribution: string): Promise<WSLHealthStatus> {
+    this.validateDistributionName(distribution);
     const issues: WSLHealthIssue[] = [];
     let wslServiceRunning = false;
     let distributionResponsive = false;
@@ -941,7 +962,7 @@ export class WSLProtocol extends BaseProtocol {
     try {
       // Check if WSL service is running
       try {
-        await execAsync('wsl --status', { timeout: 5000 });
+        await execFileAsync('wsl', ['--status'], { timeout: 5000 });
         wslServiceRunning = true;
       } catch (error) {
         issues.push({
@@ -955,7 +976,7 @@ export class WSLProtocol extends BaseProtocol {
 
       // Check if distribution is responsive
       try {
-        await execAsync(`wsl -d ${distribution} --exec echo "test"`, {
+        await execFileAsync('wsl', ['-d', distribution, '--exec', 'echo', 'test'], {
           timeout: 10000,
         });
         distributionResponsive = true;
@@ -972,7 +993,7 @@ export class WSLProtocol extends BaseProtocol {
       // Check network connectivity
       if (distributionResponsive) {
         try {
-          await execAsync(`wsl -d ${distribution} -- ping -c 1 8.8.8.8`, {
+          await execFileAsync('wsl', ['-d', distribution, '--', 'ping', '-c', '1', '8.8.8.8'], {
             timeout: 10000,
           });
           networkConnectivity = true;
@@ -987,7 +1008,7 @@ export class WSLProtocol extends BaseProtocol {
 
         // Check filesystem accessibility
         try {
-          await execAsync(`wsl -d ${distribution} -- ls /tmp`, {
+          await execFileAsync('wsl', ['-d', distribution, '--', 'ls', '/tmp'], {
             timeout: 5000,
           });
           filesystemAccessible = true;
@@ -1002,8 +1023,8 @@ export class WSLProtocol extends BaseProtocol {
 
         // Check systemd status
         try {
-          const { stdout } = await execAsync(
-            `wsl -d ${distribution} -- systemctl is-active systemd`,
+          const { stdout } = await execFileAsync(
+            'wsl', ['-d', distribution, '--', 'systemctl', 'is-active', 'systemd'],
             { timeout: 5000 }
           );
           systemdStatus = stdout.trim() === 'active' ? 'active' : 'inactive';
@@ -1013,8 +1034,8 @@ export class WSLProtocol extends BaseProtocol {
 
         // Get memory usage
         try {
-          const { stdout } = await execAsync(
-            `wsl -d ${distribution} -- free -m | grep Mem:`,
+          const { stdout } = await execFileAsync(
+            'wsl', ['-d', distribution, '--', 'bash', '-c', 'free -m | grep Mem:'],
             { timeout: 5000 }
           );
           const memMatch = stdout.match(/\s+(\d+)\s+(\d+)/);
@@ -1029,8 +1050,8 @@ export class WSLProtocol extends BaseProtocol {
 
         // Get disk usage
         try {
-          const { stdout } = await execAsync(
-            `wsl -d ${distribution} -- df -h / | tail -1`,
+          const { stdout } = await execFileAsync(
+            'wsl', ['-d', distribution, '--', 'bash', '-c', 'df -h / | tail -1'],
             { timeout: 5000 }
           );
           const diskMatch = stdout.match(/(\d+)%/);
@@ -1138,7 +1159,7 @@ export class WSLProtocol extends BaseProtocol {
       switch (issue.type) {
         case 'configuration':
           if (issue.message.includes('WSL service is not running')) {
-            await execAsync('wsl --shutdown', { timeout: 10000 });
+            await execFileAsync('wsl', ['--shutdown'], { timeout: 10000 });
             await new Promise((resolve) => setTimeout(resolve, 3000));
             await this.startDistribution(session.distribution);
           } else if (issue.message.includes('not responsive')) {
@@ -1223,8 +1244,9 @@ export class WSLProtocol extends BaseProtocol {
       const distributions = await this.getInstalledDistributions();
       for (const dist of distributions) {
         try {
-          const { stdout } = await execAsync(
-            `wsl -d ${dist.name} -- cat /etc/wsl.conf 2>/dev/null || echo ""`,
+          this.validateDistributionName(dist.name);
+          const { stdout } = await execFileAsync(
+            'wsl', ['-d', dist.name, '--', 'bash', '-c', 'cat /etc/wsl.conf 2>/dev/null || echo ""'],
             { timeout: 5000 }
           );
           if (stdout.trim()) {

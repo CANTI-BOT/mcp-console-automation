@@ -34,7 +34,7 @@
     "environment": {
       "platform": "win32",
       "nodeVersion": "v22.20.0",
-      "cwd": "C:\\Users\\cheat\\source\\repos\\mcp-console-automation",
+      "cwd": "/workspace/mcp-console-automation",
       "timestamp": "2025-10-30T19:22:12.846Z"
     }
   }

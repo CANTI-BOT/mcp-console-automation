@@ -20,7 +20,7 @@ export class SnapshotManager {
 
   constructor(snapshotsDir?: string) {
     this.snapshotsDir =
-      snapshotsDir || path.join(process.cwd(), 'data', 'snapshots');
+      snapshotsDir || path.join(process.env.APPDATA || path.dirname(process.argv[1] || process.cwd()), 'console-automation-mcp', 'data', 'snapshots');
     this.ensureSnapshotsDir();
   }
 
