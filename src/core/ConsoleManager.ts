@@ -116,7 +116,7 @@ import { VNCSessionManager, VNCSessionHost } from './VNCSessionManager.js';
 import { IPMISessionManager } from './IPMISessionManager.js';
 // JobManager functionality integrated into SessionManager
 import PQueue from 'p-queue';
-import { platform, homedir } from 'os';
+import { platform, homedir, cpus, totalmem, freemem, uptime, loadavg, hostname } from 'os';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 
@@ -4547,16 +4547,91 @@ export class ConsoleManager
     return null;
   }
 
-  getSystemMetrics(): null {
-    return null;
+  getSystemMetrics(): {
+    cpu: { cores: number; model: string; loadAvg: number[] };
+    memory: { totalMB: number; freeMB: number; usedMB: number; usagePercent: number };
+    process: { heapUsedMB: number; heapTotalMB: number; rssMB: number; uptimeSeconds: number };
+    system: { uptimeSeconds: number; platform: string; hostname: string };
+    timestamp: string;
+  } {
+    try {
+      const cpuList = cpus();
+      const totalMem = totalmem();
+      const freeMem = freemem();
+      const memUsage = process.memoryUsage();
+      return {
+        cpu: {
+          cores: cpuList.length,
+          model: cpuList[0]?.model ?? 'unknown',
+          loadAvg: loadavg(),
+        },
+        memory: {
+          totalMB: Math.round(totalMem / 1024 / 1024),
+          freeMB: Math.round(freeMem / 1024 / 1024),
+          usedMB: Math.round((totalMem - freeMem) / 1024 / 1024),
+          usagePercent: Math.round(((totalMem - freeMem) / totalMem) * 100),
+        },
+        process: {
+          heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+          heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+          rssMB: Math.round(memUsage.rss / 1024 / 1024),
+          uptimeSeconds: Math.round(process.uptime()),
+        },
+        system: {
+          uptimeSeconds: Math.round(uptime()),
+          platform: platform(),
+          hostname: hostname(),
+        },
+        timestamp: new Date().toISOString(),
+      };
+    } catch {
+      return {
+        cpu: { cores: 0, model: 'unknown', loadAvg: [0, 0, 0] },
+        memory: { totalMB: 0, freeMB: 0, usedMB: 0, usagePercent: 0 },
+        process: { heapUsedMB: 0, heapTotalMB: 0, rssMB: 0, uptimeSeconds: 0 },
+        system: { uptimeSeconds: 0, platform: 'unknown', hostname: 'unknown' },
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 
   getAlerts(): never[] {
     return [];
   }
 
-  getDashboard(): null {
-    return null;
+  getDashboard(): {
+    system: ReturnType<ConsoleManager['getSystemMetrics']>;
+    resources: ReturnType<ConsoleManager['getResourceUsage']>;
+    alerts: ReturnType<ConsoleManager['getAlerts']>;
+    jobs: ReturnType<ConsoleManager['getBackgroundJobMetrics']>;
+    sessions: { total: number; running: number; stopped: number };
+    timestamp: string;
+  } {
+    try {
+      const sessions = this.getAllSessions();
+      const running = sessions.filter((s) => s.status === 'running').length;
+      return {
+        system: this.getSystemMetrics(),
+        resources: this.getResourceUsage(),
+        alerts: this.getAlerts(),
+        jobs: this.getBackgroundJobMetrics(),
+        sessions: {
+          total: sessions.length,
+          running,
+          stopped: sessions.length - running,
+        },
+        timestamp: new Date().toISOString(),
+      };
+    } catch {
+      return {
+        system: this.getSystemMetrics(),
+        resources: this.getResourceUsage(),
+        alerts: this.getAlerts(),
+        jobs: this.getBackgroundJobMetrics(),
+        sessions: { total: 0, running: 0, stopped: 0 },
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 
   private startResourceMonitor() {
