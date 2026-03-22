@@ -1,4 +1,4 @@
-import { spawn, ChildProcess, SpawnOptions } from 'child_process';
+import { spawn, execFile, ChildProcess, SpawnOptions } from 'child_process';
 import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
 import stripAnsi from 'strip-ansi';
@@ -4802,245 +4802,166 @@ export class ConsoleManager
     args?: string[],
     options?: Partial<SessionOptions>
   ): Promise<{ output: string; exitCode?: number }> {
-    console.error(
-      `[EVENT-FIX] ConsoleManager.executeCommand called with:`,
-      JSON.stringify(
-        {
-          command,
-          args,
-          options: {
-            ...options,
-            sshOptions: options?.sshOptions
-              ? {
-                  host: options.sshOptions.host,
-                  username: options.sshOptions.username,
-                }
-              : undefined,
-          },
-        },
-        null,
-        2
-      )
-    );
+    const consoleType = options?.consoleType || this.detectProtocolType({ command, ...options } as SessionOptions);
+    const timeoutMs = options?.timeout || 120000;
+    const fullCommand = args && args.length > 0 ? `${command} ${args.join(' ')}` : command;
 
-    // Create session with all options
+    this.logger.debug(`executeCommand one-off: consoleType=${consoleType}, command="${fullCommand}"`);
+
+    // For SSH sessions, delegate to the existing SSH-based interactive path
+    if (consoleType === 'ssh' && options?.sshOptions) {
+      return this.executeCommandViaSSH(fullCommand, options);
+    }
+
+    // Non-interactive one-off execution: spawn shell with the command and let it exit
+    const { shellCmd, shellArgs } = this.buildOneOffShellArgs(consoleType, fullCommand);
+
+    return new Promise((resolve) => {
+      let stdout = '';
+      let stderr = '';
+
+      const child = spawn(shellCmd, shellArgs, {
+        cwd: options?.cwd || homedir(),
+        env: { ...process.env, ...options?.env },
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+
+      const timeoutHandle = setTimeout(() => {
+        child.kill('SIGTERM');
+        // Give it a moment to die, then force-kill
+        setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 1000);
+      }, timeoutMs);
+
+      child.stdout?.on('data', (data) => { stdout += data.toString(); });
+      child.stderr?.on('data', (data) => { stderr += data.toString(); });
+
+      child.on('error', (err) => {
+        clearTimeout(timeoutHandle);
+        resolve({ output: `Error spawning process: ${err.message}`, exitCode: 1 });
+      });
+
+      child.on('close', (code, signal) => {
+        clearTimeout(timeoutHandle);
+        const output = (stdout + stderr).trim();
+        if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+          resolve({ output: output + '\n[Command timed out]', exitCode: 124 });
+        } else {
+          resolve({ output, exitCode: code ?? 0 });
+        }
+      });
+    });
+  }
+
+  /**
+   * Build shell executable and arguments for non-interactive one-off command execution.
+   * Respects the consoleType parameter to spawn the correct shell.
+   */
+  private buildOneOffShellArgs(
+    consoleType: string,
+    command: string
+  ): { shellCmd: string; shellArgs: string[] } {
+    switch (consoleType) {
+      case 'powershell':
+        return {
+          shellCmd: 'powershell.exe',
+          shellArgs: ['-NoProfile', '-NonInteractive', '-Command', command],
+        };
+      case 'pwsh':
+        return {
+          shellCmd: 'pwsh.exe',
+          shellArgs: ['-NoProfile', '-NonInteractive', '-Command', command],
+        };
+      case 'cmd':
+        return {
+          shellCmd: 'cmd.exe',
+          shellArgs: ['/C', command],
+        };
+      case 'bash':
+        return {
+          shellCmd: 'bash',
+          shellArgs: ['-c', command],
+        };
+      case 'zsh':
+        return {
+          shellCmd: 'zsh',
+          shellArgs: ['-c', command],
+        };
+      case 'sh':
+        return {
+          shellCmd: 'sh',
+          shellArgs: ['-c', command],
+        };
+      default:
+        // Default to PowerShell on Windows, sh on Unix
+        if (platform() === 'win32') {
+          return {
+            shellCmd: 'powershell.exe',
+            shellArgs: ['-NoProfile', '-NonInteractive', '-Command', command],
+          };
+        }
+        return {
+          shellCmd: 'sh',
+          shellArgs: ['-c', command],
+        };
+    }
+  }
+
+  /**
+   * Execute a one-off command via SSH (delegates to existing interactive SSH path).
+   */
+  private async executeCommandViaSSH(
+    command: string,
+    options: Partial<SessionOptions>
+  ): Promise<{ output: string; exitCode?: number }> {
+    const sessionId = uuidv4();
     const sessionOptions: SessionOptions = {
       command,
-      args: args || [],
-      isOneShot: true, // Explicitly mark as one-shot
+      args: [],
+      isOneShot: true,
       ...options,
     };
 
-    // Detect protocol type if not specified
-    if (!sessionOptions.consoleType) {
-      sessionOptions.consoleType = this.detectProtocolType(sessionOptions);
-    }
-
-    // Apply platform-specific command translation for SSH sessions
-    if (sessionOptions.consoleType === 'ssh' && sessionOptions.sshOptions) {
-      const translatedCommand = this.translateCommandForSSH(command, args);
-      sessionOptions.command = translatedCommand.command;
-      sessionOptions.args = translatedCommand.args;
-
-      this.logger.debug(`Command translation for SSH session:`, {
-        original: { command, args },
-        translated: {
-          command: translatedCommand.command,
-          args: translatedCommand.args,
-        },
-        sshHost: sessionOptions.sshOptions.host,
-      });
-    }
-
-    // Create a one-shot session
-    const sessionId = uuidv4();
-    console.error(
-      `[EVENT-FIX] About to call createSessionInternal with sessionId: ${sessionId}`
-    );
+    const translatedCommand = this.translateCommandForSSH(command);
+    sessionOptions.command = translatedCommand.command;
+    sessionOptions.args = translatedCommand.args;
 
     try {
-      const sessionIdResult = await this.createSessionInternal(
-        sessionId,
-        sessionOptions,
-        true
-      );
-      console.error(
-        `[EVENT-FIX] createSessionInternal completed, sessionIdResult:`,
-        sessionIdResult
-      );
+      await this.createSessionInternal(sessionId, sessionOptions, true);
+      await this.sendInput(sessionId, command + '\n');
 
-      // Record one-shot session creation
-      this.diagnosticsManager.recordEvent({
-        level: 'info',
-        category: 'session',
-        operation: 'one_shot_session_created',
-        sessionId,
-        message: 'Created one-shot session for command execution',
-        data: { command, args },
-      });
-
-      // CRITICAL FIX: Actually send the command to the session after creating it
-      const fullCommand =
-        args && args.length > 0 ? `${command} ${args.join(' ')}` : command;
-      console.error(
-        `[EVENT-FIX] About to send command to session: "${fullCommand}"`
-      );
-
-      await this.sendInput(sessionId, fullCommand + '\n');
-      console.error(
-        `[EVENT-FIX] Command sent successfully to session ${sessionId}`
-      );
-
-      console.error(
-        `[EVENT-FIX] Creating Promise for command execution, sessionId: ${sessionId}`
-      );
-      return new Promise((resolve, reject) => {
-        console.error(
-          `[EVENT-FIX] Inside Promise executor, setting up event handlers`
-        );
+      return new Promise((resolve) => {
         const outputs: string[] = [];
-        let timeoutHandle: NodeJS.Timeout | null = null;
-        const timeoutMs = options?.timeout || 120000; // 2 minute timeout for production (reverted from regression)
-        console.error(`[EVENT-FIX] Timeout set to: ${timeoutMs}ms`);
+        const timeoutMs = options?.timeout || 120000;
 
         const cleanup = async () => {
           this.removeListener('console-event', handleEvent);
-          if (timeoutHandle) {
-            clearTimeout(timeoutHandle);
-          }
-
-          // Always cleanup one-shot sessions
+          clearTimeout(timeoutHandle);
           const session = this.sessions.get(sessionId);
           if (session?.sessionType === 'one-shot') {
-            this.diagnosticsManager.recordEvent({
-              level: 'info',
-              category: 'session',
-              operation: 'one_shot_cleanup',
-              sessionId,
-              message: 'Cleaning up one-shot session after command execution',
-            });
             await this.cleanupSession(sessionId);
           }
         };
 
         const handleEvent = (event: ConsoleEvent) => {
-          console.error(
-            `[EVENT-FIX] handleEvent received event:`,
-            JSON.stringify(
-              {
-                type: event.type,
-                sessionId: event.sessionId,
-                targetSessionId: sessionId,
-                matches: event.sessionId === sessionId,
-                hasData: !!event.data,
-              },
-              null,
-              2
-            )
-          );
-
           if (event.sessionId !== sessionId) return;
-
-          console.error(
-            `[EVENT-FIX] Processing event for our session, type: ${event.type}`
-          );
-
           if (event.type === 'output') {
             outputs.push(event.data.data);
-            console.error(
-              `[EVENT-FIX] Added output, total length: ${outputs.join('').length}`
-            );
-          } else if (
-            event.type === 'stopped' ||
-            event.type === 'terminated' ||
-            event.type === 'session-closed'
-          ) {
-            console.error(
-              `[EVENT-FIX] Session completion event received: ${event.type}`
-            );
-            cleanup()
-              .then(() => {
-                resolve({
-                  output: outputs.join(''),
-                  exitCode: event.data?.exitCode || 0,
-                });
-              })
-              .catch((err) => {
-                this.logger.warn('Cleanup error during session stop:', err);
-                resolve({
-                  output: outputs.join(''),
-                  exitCode: event.data?.exitCode || 0,
-                });
-              });
-          } else if (event.type === 'error') {
-            console.error(`[EVENT-FIX] Error event received:`, event.data);
-            // Only reject on serious errors, not command output errors
-            if (
-              event.data.error &&
-              (event.data.error.includes('connection') ||
-                event.data.error.includes('authentication') ||
-                event.data.error.includes('timeout') ||
-                event.data.error.includes('network'))
-            ) {
-              cleanup()
-                .then(() => {
-                  reject(new Error(`Session error: ${event.data.error}`));
-                })
-                .catch((err) => {
-                  this.logger.warn('Cleanup error during session error:', err);
-                  reject(new Error(`Session error: ${event.data.error}`));
-                });
-            }
-            // Otherwise, treat errors as part of command output and continue
+          } else if (event.type === 'stopped' || event.type === 'terminated' || event.type === 'session-closed') {
+            cleanup().then(() => resolve({ output: outputs.join(''), exitCode: event.data?.exitCode || 0 }))
+              .catch(() => resolve({ output: outputs.join(''), exitCode: event.data?.exitCode || 0 }));
           }
         };
 
-        // Set up timeout for the command execution
-        console.error(
-          `[EVENT-FIX] Setting up timeout handler for ${timeoutMs}ms`
-        );
-        timeoutHandle = setTimeout(() => {
-          console.error(
-            `[EVENT-FIX] TIMEOUT TRIGGERED! Command execution timed out after ${timeoutMs}ms, sessionId: ${sessionId}`
-          );
-          this.diagnosticsManager.recordEvent({
-            level: 'warn',
-            category: 'session',
-            operation: 'one_shot_timeout',
-            sessionId,
-            message: `One-shot session timed out after ${timeoutMs}ms`,
-          });
-
-          cleanup()
-            .then(() => {
-              // Return whatever output we have collected so far
-              resolve({
-                output: outputs.join('') + '\n[Command timed out]',
-                exitCode: 124, // Standard timeout exit code
-              });
-            })
-            .catch((err) => {
-              this.logger.warn('Cleanup error during timeout:', err);
-              reject(
-                new Error(`Command execution timeout after ${timeoutMs}ms`)
-              );
-            });
+        const timeoutHandle = setTimeout(() => {
+          cleanup().then(() => resolve({ output: outputs.join('') + '\n[Command timed out]', exitCode: 124 }))
+            .catch(() => resolve({ output: outputs.join('') + '\n[Command timed out]', exitCode: 124 }));
         }, timeoutMs);
 
-        console.error(
-          `[EVENT-FIX] Registering event listener for 'console-event' on sessionId: ${sessionId}`
-        );
         this.on('console-event', handleEvent);
-        console.error(
-          `[EVENT-FIX] Event listener registered, Promise setup complete`
-        );
       });
     } catch (error) {
-      console.error(
-        `[EVENT-FIX] Failed to create session or send command:`,
-        error
-      );
-      throw new Error(`Failed to execute command: ${error}`);
+      throw new Error(`Failed to execute SSH command: ${error}`);
     }
   }
 
