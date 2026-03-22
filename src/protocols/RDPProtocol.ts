@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
+import { tmpdir } from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import * as forge from 'node-forge';
 // Canvas import made optional to handle missing dependency
@@ -552,7 +553,7 @@ export class RDPProtocol extends BaseProtocol {
     sessionId: string,
     options: RDPConnectionOptions
   ): string {
-    const rdpDir = join(process.cwd(), 'temp', 'rdp');
+    const rdpDir = join(process.env.APPDATA || tmpdir(), 'console-automation-mcp', 'temp', 'rdp');
     if (!existsSync(rdpDir)) {
       mkdirSync(rdpDir, { recursive: true });
     }

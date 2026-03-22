@@ -29,7 +29,11 @@ export class Logger {
 
     // Always use file logging for MCP servers
     if (isMCPServer || process.env.NODE_ENV === 'production') {
-      const logDir = path.join(process.cwd(), 'logs');
+      const logDir = path.join(
+        process.env.APPDATA || path.dirname(process.argv[1] || process.cwd()),
+        'console-automation-mcp',
+        'logs'
+      );
       if (!fs.existsSync(logDir)) {
         fs.mkdirSync(logDir, { recursive: true });
       }

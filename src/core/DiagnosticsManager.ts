@@ -189,7 +189,7 @@ export class DiagnosticsManager extends EventEmitter {
   private operationTraces: Map<string, OperationTrace> = new Map();
   private performanceData: Map<string, number[]> = new Map();
   private maxEventsStored = 10000;
-  private diagnosticsDir = './diagnostics';
+  private diagnosticsDir = join(process.env.APPDATA || '', 'console-automation-mcp', 'diagnostics');
   private metricsInterval: NodeJS.Timeout | null = null;
   private isRecording = true;
   private verboseMode = false;
@@ -206,7 +206,7 @@ export class DiagnosticsManager extends EventEmitter {
   ) {
     super();
     this.logger = new Logger('DiagnosticsManager');
-    this.diagnosticsDir = config.diagnosticsPath || './diagnostics';
+    this.diagnosticsDir = config.diagnosticsPath || join(process.env.APPDATA || '', 'console-automation-mcp', 'diagnostics');
     this.maxEventsStored = config.maxEventHistory || 10000;
     this.verboseMode = config.verboseLogging || false;
     this.isRecording = config.enableDiagnostics !== false;

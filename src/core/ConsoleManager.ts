@@ -116,7 +116,8 @@ import { VNCSessionManager, VNCSessionHost } from './VNCSessionManager.js';
 import { IPMISessionManager } from './IPMISessionManager.js';
 // JobManager functionality integrated into SessionManager
 import PQueue from 'p-queue';
-import { platform } from 'os';
+import { platform, homedir } from 'os';
+import { join } from 'path';
 import { readFileSync } from 'fs';
 
 export class ConsoleManager
@@ -326,7 +327,7 @@ export class ConsoleManager
       enableDiagnostics: true,
       verboseLogging: false,
       persistDiagnostics: true,
-      diagnosticsPath: './diagnostics',
+      diagnosticsPath: join(process.env.APPDATA || homedir(), 'console-automation-mcp', 'diagnostics'),
       maxEventHistory: 10000,
       metricsIntervalMs: 30000,
     });
