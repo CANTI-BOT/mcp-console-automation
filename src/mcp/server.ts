@@ -2496,13 +2496,26 @@ export class ConsoleAutomationServer {
     const configManager = (this.consoleManager as unknown as { configManager: { config: Record<string, unknown>; removeConnectionProfile: (name: string) => boolean } }).configManager;
     const applicationProfiles = configManager.config.applicationProfiles;
 
+    // Redact sensitive credentials from profile output
+    const redactedConnections = (connectionProfiles as unknown as Array<Record<string, unknown>>).map((p: Record<string, unknown>) => {
+      const redacted = { ...p };
+      if (redacted.sshOptions && typeof redacted.sshOptions === 'object') {
+        const opts = { ...(redacted.sshOptions as Record<string, unknown>) };
+        if (opts.password) opts.password = '***REDACTED***';
+        if (opts.privateKey) opts.privateKey = '***REDACTED***';
+        if (opts.passphrase) opts.passphrase = '***REDACTED***';
+        redacted.sshOptions = opts;
+      }
+      return redacted;
+    });
+
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify(
             {
-              connectionProfiles,
+              connectionProfiles: redactedConnections,
               applicationProfiles,
               defaultProfile: configManager.config.defaultConnectionProfile,
             },

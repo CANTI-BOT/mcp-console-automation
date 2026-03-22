@@ -308,18 +308,8 @@ export class CommandQueueManager {
     duration: number;
     status: 'completed' | 'failed' | 'timeout';
   }> {
-    console.error(
-      `[DEBUG-HANG] executeCommandInSession called with:`,
-      JSON.stringify(
-        {
-          sessionId,
-          command,
-          args,
-          timeout,
-        },
-        null,
-        2
-      )
+    this.logger.debug(
+      `executeCommandInSession called: sessionId=${sessionId}, command="${command}", timeout=${timeout}`
     );
 
     const session = this.host.getSession(sessionId);

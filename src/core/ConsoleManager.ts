@@ -594,13 +594,9 @@ export class ConsoleManager
    * Handle protocol output
    */
   private handleProtocolOutput(sessionId: string, output: ConsoleOutput): void {
-    // Add to output buffer
-    let buffer = this.outputBuffers.get(sessionId);
-    if (!buffer) {
-      buffer = [];
-      this.outputBuffers.set(sessionId, buffer);
-    }
-    buffer.push(output);
+    // Route through addToBuffer so processOutputForCommandTracking runs
+    // (BUG-002 fix: boundary detection was bypassed for protocol sessions)
+    this.addToBuffer(sessionId, output);
 
     // BUG-003 fix: forward output to StreamManager when streaming is enabled.
     // Without this, getStream() returns a non-null manager but chunks are always
