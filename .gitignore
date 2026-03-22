@@ -116,3 +116,12 @@ ultra-*.json
 sessions.json
 data/sessions.json
 *.tgz.harness-verified
+
+# Claude chat artifacts
+.full-review/
+src/mcp/*.html
+src/mcp/*.skill
+*.skill
+*-review-iter*.html
+SECURITY_FIX_SUMMARY.md
+CHANGES_DETAIL.md

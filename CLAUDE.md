@@ -4,7 +4,7 @@
 - **Repository**: https://github.com/ooples/console-automation-mcp
 - **Description**: Console Automation MCP - A tool for managing console sessions with SSH support
 - **Important**: This is the ooples/console-automation-mcp project (formerly mcp-console-automation)
-- **Deployed to**: `C:\Users\Canti\mcp-servers\console-automation-mcp\` (dist only — no src)
+- **Deployed to**: `%USERPROFILE%\mcp-servers\console-automation-mcp\` (dist only — no src)
 
 ## Important Rules
 
@@ -29,7 +29,7 @@
 4. **Deployment Workflow**:
    - Source of truth: this directory (COWORK copy)
    - After any source change: `npm run build` then robocopy dist → mcp-servers
-   - `robocopy ".\dist" "C:\Users\Canti\mcp-servers\console-automation-mcp\dist" /E /PURGE /NP`
+   - `robocopy ".\dist" "%USERPROFILE%\mcp-servers\console-automation-mcp\dist" /E /PURGE /NP`
    - Restart Claude Desktop after deploying
 
 ## Project-Specific Guidelines
