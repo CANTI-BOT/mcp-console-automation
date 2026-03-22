@@ -602,6 +602,14 @@ export class ConsoleManager
     }
     buffer.push(output);
 
+    // BUG-003 fix: forward output to StreamManager when streaming is enabled.
+    // Without this, getStream() returns a non-null manager but chunks are always
+    // empty because no code was calling addChunk() on the protocol-factory path.
+    const streamManager = this.streamManagers.get(sessionId);
+    if (streamManager) {
+      streamManager.addChunk(output.data, output.type === 'stderr');
+    }
+
     // Emit output event (legacy)
     this.emit('output', {
       sessionId,
@@ -2305,6 +2313,21 @@ export class ConsoleManager
 
       // Setup protocol event handlers
       this.setupProtocolEventHandlers(sessionId, protocol, protocolType);
+
+      // BUG-003 fix: initialize StreamManager for protocol-based sessions when
+      // streaming is requested.  The legacy direct paths (createLocalSession,
+      // createPooledSSHSession) do this inline; the protocol-factory path did not.
+      if (resolvedOptions.streaming) {
+        const streamManager = new StreamManager(sessionId, {
+          enableRealTimeCapture: true,
+          immediateFlush: true,
+          bufferFlushInterval: 5,
+          pollingInterval: 25,
+          chunkCombinationTimeout: 10,
+          maxChunkSize: 4096,
+        });
+        this.streamManagers.set(sessionId, streamManager);
+      }
 
       // Mark session as running only after successful initialization
       session.status = 'running';
