@@ -2559,18 +2559,83 @@ export class ConsoleAutomationServer {
     debugLog('[DEBUG] handleUseProfile called with:', args);
 
     try {
-      // Load and validate the profile BEFORE creating the session
+      // Load and validate the profile BEFORE creating the session.
+      // Try connection profiles first, then application profiles.
       const profile = this.consoleManager
         .getConfigManager()
         .getConnectionProfile(args.profileName);
-      debugLog('[DEBUG] Profile loaded:', profile);
+      const appProfile = !profile
+        ? this.consoleManager.getConfigManager().getApplicationProfile(args.profileName)
+        : undefined;
+      debugLog('[DEBUG] Profile loaded (connection):', profile);
+      debugLog('[DEBUG] Profile loaded (application):', appProfile);
 
-      if (!profile) {
-        debugLog('[DEBUG] Profile not found, throwing error');
+      if (!profile && !appProfile) {
+        debugLog('[DEBUG] Profile not found in connection or application profiles');
         throw new McpError(
           ErrorCode.InvalidParams,
-          `Profile not found: ${args.profileName}`
+          `Profile not found: ${args.profileName}. Use list_profiles to see available profiles.`
         );
+      }
+
+      // Application profile path: create a local console session from stored command
+      if (appProfile && !profile) {
+        const command = args.command || appProfile.command;
+        if (!command) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            `Application profile '${args.profileName}' has no command defined. Provide a command parameter.`
+          );
+        }
+        debugLog('[PROFILE] Application profile detected, command:', command);
+
+        // Derive consoleType from the executable name
+        const cmdBase = command.toLowerCase().replace(/\.exe$/i, '').split(/[\\/]/).pop() || '';
+        let consoleType: ConsoleType = 'auto';
+        if (cmdBase === 'powershell') consoleType = 'powershell';
+        else if (cmdBase === 'pwsh') consoleType = 'pwsh';
+        else if (cmdBase === 'cmd') consoleType = 'cmd';
+        else if (cmdBase === 'bash') consoleType = 'bash';
+
+        const sessionOptions: SessionOptions = {
+          command,
+          args: args.args || appProfile.args,
+          cwd: args.cwd || appProfile.workingDirectory,
+          env: args.env,
+          profileName: args.profileName,
+          consoleType,
+        };
+
+        debugLog('[DEBUG] Creating application profile session with options:', sessionOptions);
+
+        const sessionId = await this.consoleManager.createSession(sessionOptions);
+        const session = this.consoleManager.getSession(sessionId);
+
+        if (sessionId) {
+          this.sessionRecoveryMap.set(sessionId, {
+            profileName: args.profileName,
+            type: 'profile',
+          });
+        }
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  sessionId,
+                  profileUsed: args.profileName,
+                  message: `Session created using application profile: ${args.profileName}`,
+                  consoleType: session?.type || consoleType,
+                  command,
+                },
+                null,
+                2
+              ),
+            } as TextContent,
+          ],
+        };
       }
 
       // Check for Windows SSH password authentication early
@@ -2709,6 +2774,8 @@ export class ConsoleAutomationServer {
         };
       }
     } catch (error: unknown) {
+      const errMsg = error instanceof Error ? (error.stack || error.message) : String(error);
+      console.error('use_profile error:', errMsg);
       debugLog('[ERROR] Profile usage failed:', error);
       throw error;
     }
