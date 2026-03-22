@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
+import { platform } from 'os';
 import { spawn, ChildProcess } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { Logger } from '../utils/logger.js';
@@ -816,6 +817,7 @@ export class SessionManager extends EventEmitter {
       createdAt: new Date(),
       output: [],
       progress: { current: 0, total: 100, message: 'Initializing...' },
+      metadata: options.metadata,
     };
 
     this.backgroundJobs.set(jobId, job);
@@ -885,12 +887,49 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Build spawn args for a background job respecting the session's consoleType (BUG-004).
+   * Avoids shell: true which defaults to cmd.exe on Windows and breaks PowerShell cmdlets.
+   */
+  private buildJobSpawnArgs(job: BackgroundJob): {
+    shell: string;
+    args: string[];
+  } {
+    const consoleType: string = job.metadata?.consoleType || '';
+    const fullCommand =
+      job.args && job.args.length > 0
+        ? `${job.command} ${job.args.join(' ')}`
+        : job.command;
+
+    switch (consoleType) {
+      case 'powershell':
+        return { shell: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', fullCommand] };
+      case 'pwsh':
+        return { shell: 'pwsh.exe', args: ['-NoProfile', '-NonInteractive', '-Command', fullCommand] };
+      case 'cmd':
+        return { shell: 'cmd.exe', args: ['/C', fullCommand] };
+      case 'bash':
+        return { shell: 'bash', args: ['-c', fullCommand] };
+      case 'zsh':
+        return { shell: 'zsh', args: ['-c', fullCommand] };
+      case 'sh':
+        return { shell: 'sh', args: ['-c', fullCommand] };
+      default:
+        // No consoleType: fall back to platform default
+        if (platform() === 'win32') {
+          return { shell: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', fullCommand] };
+        }
+        return { shell: 'sh', args: ['-c', fullCommand] };
+    }
+  }
+
   private async runJob(job: BackgroundJob): Promise<void> {
     return new Promise((resolve, reject) => {
-      const childProcess = spawn(job.command, job.args || [], {
+      const { shell, args: shellArgs } = this.buildJobSpawnArgs(job);
+      const childProcess = spawn(shell, shellArgs, {
         cwd: job.cwd,
         env: { ...process.env, ...job.env },
-        shell: true,
+        windowsHide: true,
       });
 
       job.process = childProcess;

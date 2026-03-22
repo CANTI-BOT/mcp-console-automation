@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { ClientChannel } from 'ssh2';
+import stripAnsi from 'strip-ansi';
 import { Logger } from '../utils/logger.js';
 import { CommandExecution, ConsoleOutput } from '../types/index.js';
 import {
@@ -289,8 +290,10 @@ export class CommandQueueManager {
       return false;
     }
 
-    // Check if the output contains a prompt indicating command completion
-    return promptPattern.test(output);
+    // Strip ANSI escape sequences and normalize \r\n so prompt regexes match
+    // against clean text regardless of PTY/ConPTY color codes or Windows line endings.
+    const cleaned = stripAnsi(output).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return promptPattern.test(cleaned);
   }
 
   async executeCommandInSession(
@@ -1055,7 +1058,18 @@ export class CommandQueueManager {
         commandExecution.output.push(output);
         commandExecution.totalOutputLines++;
 
-        if (this.detectCommandCompletion(sessionId, output.data)) {
+        // Check the current chunk first, then fall back to checking the last
+        // ~200 chars of accumulated output (handles prompts split across chunks).
+        let completed = this.detectCommandCompletion(sessionId, output.data);
+        if (!completed && commandExecution.output.length > 1) {
+          const recent = commandExecution.output
+            .slice(-3)
+            .map((o) => o.data)
+            .join('');
+          completed = this.detectCommandCompletion(sessionId, recent);
+        }
+
+        if (completed) {
           output.isCommandBoundary = true;
           output.boundaryType = 'end';
           this.completeCommandExecution(session.currentCommandId);

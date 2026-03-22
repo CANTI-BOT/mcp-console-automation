@@ -2794,12 +2794,15 @@ export class ConsoleAutomationServer {
     metadata?: Record<string, unknown>;
   }) {
     try {
+      // Read the session's consoleType so the job spawns the correct shell (BUG-004)
+      const sessionConsoleType = this.consoleManager.getSession(args.sessionId)?.type;
       const result = await this.sessionManager.executeBackgroundJob({
         sessionId: args.sessionId,
         command: args.command,
         args: args.args,
         timeout: args.timeout,
         priority: args.priority,
+        metadata: { consoleType: sessionConsoleType },
       });
 
       return {
