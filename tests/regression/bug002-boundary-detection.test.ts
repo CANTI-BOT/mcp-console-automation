@@ -30,22 +30,22 @@ const BASH_PROMPT = /^[\w\-\.~]*[$#]\s*$/m;
 describe('BUG-002: in-session boundary detection', () => {
   describe('PowerShell prompt detection', () => {
     it('detects plain prompt (no ANSI)', () => {
-      expect(detectCommandCompletion(POWERSHELL_PROMPT, 'PS C:\\Users\\Canti> ')).toBe(true);
+      expect(detectCommandCompletion(POWERSHELL_PROMPT, 'PS C:\\Users\\TestUser> ')).toBe(true);
     });
 
     it('detects prompt with ANSI color codes (Windows ConPTY)', () => {
       // ConPTY wraps the prompt in color escape sequences
-      const ansiPrompt = '\x1b[32mPS C:\\Users\\Canti>\x1b[0m ';
+      const ansiPrompt = '\x1b[32mPS C:\\Users\\TestUser>\x1b[0m ';
       expect(detectCommandCompletion(POWERSHELL_PROMPT, ansiPrompt)).toBe(true);
     });
 
     it('detects prompt after command output with CRLF line endings', () => {
-      const output = 'hello world\r\nPS C:\\Users\\Canti> ';
+      const output = 'hello world\r\nPS C:\\Users\\TestUser> ';
       expect(detectCommandCompletion(POWERSHELL_PROMPT, output)).toBe(true);
     });
 
     it('detects prompt with nested path and ANSI', () => {
-      const ansiPrompt = '\x1b[36mPS C:\\Users\\Canti\\Desktop\\project>\x1b[0m ';
+      const ansiPrompt = '\x1b[36mPS C:\\Users\\TestUser\\Desktop\\project>\x1b[0m ';
       expect(detectCommandCompletion(POWERSHELL_PROMPT, ansiPrompt)).toBe(true);
     });
 
@@ -61,16 +61,16 @@ describe('BUG-002: in-session boundary detection', () => {
 
   describe('CMD prompt detection', () => {
     it('detects plain CMD prompt', () => {
-      expect(detectCommandCompletion(CMD_PROMPT, 'C:\\Users\\Canti>')).toBe(true);
+      expect(detectCommandCompletion(CMD_PROMPT, 'C:\\Users\\TestUser>')).toBe(true);
     });
 
     it('detects CMD prompt with ANSI codes', () => {
-      const ansiPrompt = '\x1b[33mC:\\Users\\Canti>\x1b[0m';
+      const ansiPrompt = '\x1b[33mC:\\Users\\TestUser>\x1b[0m';
       expect(detectCommandCompletion(CMD_PROMPT, ansiPrompt)).toBe(true);
     });
 
     it('detects CMD prompt after CRLF output', () => {
-      const output = 'command output\r\nC:\\Users\\Canti>';
+      const output = 'command output\r\nC:\\Users\\TestUser>';
       expect(detectCommandCompletion(CMD_PROMPT, output)).toBe(true);
     });
   });
@@ -92,9 +92,9 @@ describe('BUG-002: in-session boundary detection', () => {
 
   describe('stripAnsi normalization', () => {
     it('strips bold/color codes without disturbing prompt text', () => {
-      const bold = '\x1b[1mPS C:\\Users\\Canti>\x1b[0m ';
+      const bold = '\x1b[1mPS C:\\Users\\TestUser>\x1b[0m ';
       const stripped = stripAnsi(bold);
-      expect(stripped).toBe('PS C:\\Users\\Canti> ');
+      expect(stripped).toBe('PS C:\\Users\\TestUser> ');
     });
 
     it('normalizes mixed CR+LF to LF', () => {
@@ -126,13 +126,13 @@ describe('BUG-002: in-session boundary detection', () => {
     }
 
     it('detects prompt that spans two chunks', () => {
-      // Prompt 'PS C:\\Users\\Canti> ' split across two chunks
-      const chunks = ['PS C:\\Users\\', 'Canti> '];
+      // Prompt 'PS C:\\Users\\TestUser> ' split across two chunks
+      const chunks = ['PS C:\\Users\\', 'TestUser> '];
       expect(detectAcrossChunks(POWERSHELL_PROMPT, chunks)).toBe(true);
     });
 
     it('detects ANSI-wrapped prompt split across chunks', () => {
-      const chunks = ['\x1b[32mPS C:\\', 'Users\\Canti>\x1b[0m '];
+      const chunks = ['\x1b[32mPS C:\\', 'Users\\TestUser>\x1b[0m '];
       expect(detectAcrossChunks(POWERSHELL_PROMPT, chunks)).toBe(true);
     });
   });

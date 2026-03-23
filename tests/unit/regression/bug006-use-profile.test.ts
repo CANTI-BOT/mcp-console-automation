@@ -212,14 +212,14 @@ describe('BUG-006 regression: use_profile for application profiles', () => {
         name: 'test-retest',
         type: 'custom',
         command: 'powershell',
-        workingDirectory: 'C:\\Users\\Canti',
+        workingDirectory: 'C:\\Users\\TestUser',
       };
 
       const command = /* args.command || */ profile.command;
       const cwd = /* args.cwd || */ profile.workingDirectory;
 
       expect(command).toBe('powershell');
-      expect(cwd).toBe('C:\\Users\\Canti');
+      expect(cwd).toBe('C:\\Users\\TestUser');
     });
 
     it('command override takes precedence over profile command', () => {

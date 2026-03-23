@@ -105,7 +105,7 @@ filesystem paths that were then passed to `mkdirSync`, `appendFileSync`, or
   breaking every `npm run build`.
 
 ### All log/data paths now write to
-`C:\Users\Canti\AppData\Roaming\console-automation-mcp\`
+`%APPDATA%\console-automation-mcp\`
 - `logs\mcp-combined.log`, `logs\mcp-error.log`
 - `diagnostics\` (diagnostic reports, only when persistDiagnostics=true)
 - `data\snapshots\` (test snapshots)

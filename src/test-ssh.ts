@@ -16,7 +16,7 @@ async function testSSH() {
         host: 'github.com',
         port: 22,
         username: 'git',
-        privateKeyPath: 'C:\\Users\\yolan\\.ssh\\id_ed25519'
+        privateKeyPath: '~/.ssh/id_ed25519'
       }
     });
 

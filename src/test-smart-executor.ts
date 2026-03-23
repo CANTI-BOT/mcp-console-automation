@@ -22,7 +22,7 @@ async function testSmartExecutor() {
       sshOptions: {
         host: 'ns107444.ip-51-81-109.us',
         username: 'ubuntu',
-        privateKeyPath: 'C:\\Users\\yolan\\.ssh\\id_rsa',
+        privateKeyPath: '~/.ssh/id_rsa',
         port: 22
       }
     });

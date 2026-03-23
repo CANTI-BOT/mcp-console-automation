@@ -8,7 +8,7 @@ async function testSSHKey() {
     const manager = new ConsoleManager();
     console.log('ConsoleManager created successfully');
 
-    const keyPath = 'C:\\Users\\yolan\\.ssh\\id_ed25519';
+    const keyPath = '~/.ssh/id_ed25519';
     if (!existsSync(keyPath)) {
       console.log(`SSH key not found at ${keyPath}, skipping test`);
       return;
@@ -27,7 +27,7 @@ async function testSSHKey() {
       }
     });
 
-    console.log(`✓ SUCCESS: SSH session created with key: ${sessionId}`);
+    console.log(`âœ“ SUCCESS: SSH session created with key: ${sessionId}`);
 
     // Wait a bit
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -37,7 +37,7 @@ async function testSSHKey() {
     console.log('Session closed successfully');
 
   } catch (error: any) {
-    console.error('✗ FAILURE: SSH key authentication failed:', error.message);
+    console.error('âœ— FAILURE: SSH key authentication failed:', error.message);
   }
 }
 
